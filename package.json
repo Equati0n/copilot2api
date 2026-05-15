@@ -1,0 +1,246 @@
+{
+  "name": "copilot2api",
+  "displayName": "Copilot2API",
+  "description": "Bring your own OpenAI-, Anthropic-, and Gemini-compatible models into the VS Code Copilot Chat model picker.",
+  "version": "1.0.0",
+  "publisher": "Equati0n",
+  "author": "Equati0n",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "homepage": "https://github.com/Equati0n/copilot2api#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Equati0n/copilot2api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Equati0n/copilot2api/issues"
+  },
+  "engines": {
+    "vscode": "^1.116.0",
+    "node": ">=20"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "copilot",
+    "chat",
+    "openai-compatible",
+    "anthropic",
+    "language-model",
+    "llm",
+    "model-provider"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:copilot2api.modelsView"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "copilot2api",
+        "displayName": "Copilot2API",
+        "managementCommand": "copilot2api.setApiKey"
+      }
+    ],
+    "commands": [
+      {
+        "command": "copilot2api.focusModels",
+        "title": "Copilot2API: 打开模型管理器",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "copilot2api.setApiKey",
+        "title": "Copilot2API: 设置默认 API Key"
+      },
+      {
+        "command": "copilot2api.setProviderApiKey",
+        "title": "Copilot2API: 设置服务商 API Key"
+      },
+      {
+        "command": "copilot2api.clearApiKey",
+        "title": "Copilot2API: 清除默认 API Key"
+      },
+      {
+        "command": "copilot2api.openSettings",
+        "title": "Copilot2API: 打开设置"
+      },
+      {
+        "command": "copilot2api.showLogs",
+        "title": "Copilot2API: 查看日志"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "copilot2api",
+          "title": "Copilot2API",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "copilot2api": [
+        {
+          "id": "copilot2api.modelsView",
+          "name": "模型",
+          "type": "webview"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "copilot2api.modelsView",
+        "contents": "管理 VS Code Copilot Chat 可用的自定义模型。\n[打开模型管理器](command:copilot2api.focusModels)"
+      }
+    ],
+    "configuration": {
+      "title": "Copilot2API",
+      "properties": {
+        "copilot2api.baseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "Default OpenAI-compatible API base URL."
+        },
+        "copilot2api.models": {
+          "type": "array",
+          "default": [],
+          "description": "Models to show in the VS Code chat model picker. Each item can include id, displayName, provider, baseUrl, family, contextLength, maxOutputTokens, vision, toolCalling, configId, temperature, topP, reasoningEffort, thinkingBudgetTokens, extra, and headers.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "API model id."
+              },
+              "apiType": {
+                "type": "string",
+                "default": "openai",
+                "enum": [
+                  "openai",
+                  "openai-responses",
+                  "gemini",
+                  "anthropic"
+                ],
+                "description": "API protocol used for this model."
+              },
+              "configId": {
+                "type": "string",
+                "description": "Optional suffix to register the same API model with multiple settings."
+              },
+              "displayName": {
+                "type": "string",
+                "description": "Name shown in the Copilot model picker."
+              },
+              "provider": {
+                "type": "string",
+                "description": "Provider key used for provider-specific secrets."
+              },
+              "baseUrl": {
+                "type": "string",
+                "description": "OpenAI-compatible API base URL for this model."
+              },
+              "family": {
+                "type": "string",
+                "description": "Model family shown to VS Code."
+              },
+              "contextLength": {
+                "type": "number",
+                "default": 128000,
+                "minimum": 1000
+              },
+              "maxOutputTokens": {
+                "type": "number",
+                "default": 4096,
+                "minimum": 1
+              },
+              "vision": {
+                "type": "boolean",
+                "default": false
+              },
+              "toolCalling": {
+                "type": "boolean",
+                "default": true
+              },
+              "temperature": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 2
+              },
+              "topP": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "reasoningEffort": {
+                "type": "string",
+                "enum": [
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "max",
+                  "xhigh"
+                ]
+              },
+              "thinkingBudgetTokens": {
+                "type": "number",
+                "minimum": 1024,
+                "description": "Anthropic thinking budget in tokens."
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "extra": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "copilot2api.maxOutputTokens": {
+          "type": "number",
+          "default": 4096,
+          "minimum": 1,
+          "description": "Fallback maximum output tokens when a model does not define maxOutputTokens."
+        },
+        "copilot2api.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose output channel logs."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
+    "check": "npm run compile",
+    "compile": "npm run clean && tsc -p ./",
+    "watch": "npm run clean && tsc -watch -p ./",
+    "package": "vsce package",
+    "package:strict": "vsce package",
+    "publish:vsce": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/vscode": "^1.116.0",
+    "@vscode/vsce": "^3.6.0",
+    "typescript": "^5.9.0"
+  }
+}
