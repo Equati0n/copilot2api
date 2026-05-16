@@ -1,5 +1,18 @@
 import * as vscode from 'vscode';
 import type { ResolvedModelConfig } from './types';
+import {
+  estimateMessagesTokenCount,
+  estimateTextTokenCount,
+  mergeTokenUsage,
+  reportCopilotTokenUsage,
+  type TokenUsage,
+} from './usage';
+
+interface ResponsesStreamStats {
+  textTokens: number;
+  usage?: TokenUsage;
+  usageReported: boolean;
+}
 
 interface ResponsesToolBuffer {
   callId?: string;
@@ -70,11 +83,13 @@ export async function processOpenAIResponsesStream(
   body: ReadableStream<Uint8Array>,
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
   token: vscode.CancellationToken,
+  messages: readonly vscode.LanguageModelChatRequestMessage[] = [],
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const toolBuffers = new Map<string, ResponsesToolBuffer>();
   let buffer = '';
+  const stats: ResponsesStreamStats = { textTokens: 0, usageReported: false };
 
   try {
     while (!token.isCancellationRequested) {
@@ -99,7 +114,7 @@ export async function processOpenAIResponsesStream(
         }
 
         try {
-          processResponsesEvent(JSON.parse(data) as Record<string, unknown>, toolBuffers, progress);
+          processResponsesEvent(JSON.parse(data) as Record<string, unknown>, toolBuffers, progress, stats);
         } catch {
           // Ignore malformed stream fragments; providers often mix keepalive data with SSE.
         }
@@ -110,6 +125,23 @@ export async function processOpenAIResponsesStream(
   }
 
   flushToolBuffers(toolBuffers, progress);
+
+  if (stats.usage) {
+    stats.usageReported = reportCopilotTokenUsage(progress, stats.usage, 'openai-responses-stream');
+  }
+  if (!stats.usageReported) {
+    const promptTokens = estimateMessagesTokenCount(messages);
+    const completionTokens = stats.textTokens;
+    reportCopilotTokenUsage(
+      progress,
+      {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+      },
+      'openai-responses-estimated',
+    );
+  }
 }
 
 function convertMessages(messages: readonly vscode.LanguageModelChatRequestMessage[]): {
@@ -243,10 +275,18 @@ function processResponsesEvent(
   event: Record<string, unknown>,
   toolBuffers: Map<string, ResponsesToolBuffer>,
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  stats: ResponsesStreamStats,
 ): void {
   const type = readString(event.type) ?? readString(event.event);
+  const usage = readResponsesUsage(
+    (event as { usage?: unknown }).usage ?? readRecord((event as { response?: unknown }).response)?.usage,
+  );
+  if (usage) {
+    stats.usage = mergeTokenUsage(stats.usage, usage);
+  }
 
   if (type === 'response.output_text.delta' && typeof event.delta === 'string') {
+    stats.textTokens += estimateTextTokenCount(event.delta);
     progress.report(new vscode.LanguageModelTextPart(event.delta));
     return;
   }
@@ -378,6 +418,32 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function readResponsesUsage(value: unknown): TokenUsage | undefined {
+  const record = readRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const inputDetails = readRecord(record.input_tokens_details);
+  const promptTokens =
+    readNumber(record.input_tokens) ?? readNumber(record.prompt_tokens);
+  const completionTokens =
+    readNumber(record.output_tokens) ?? readNumber(record.completion_tokens);
+  const totalTokens =
+    readNumber(record.total_tokens) ??
+    ((promptTokens ?? 0) + (completionTokens ?? 0) || undefined);
+  const cachedTokens =
+    readNumber(inputDetails?.cached_tokens) ??
+    readNumber(inputDetails?.cache_read_input_tokens);
+  if (promptTokens === undefined && completionTokens === undefined && totalTokens === undefined) {
+    return undefined;
+  }
+  return { promptTokens, completionTokens, totalTokens, cachedTokens };
 }
 
 function stringifyJson(value: unknown): string {

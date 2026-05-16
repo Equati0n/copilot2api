@@ -5,6 +5,7 @@
 .vscode/**
 .vscode-test/**
 node_modules/**
+ref/**
 src/**
 media/publisher-logo.png
 

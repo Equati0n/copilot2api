@@ -23,6 +23,7 @@
 - **多协议支持**：在同一扩展中同时支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini 协议。
 - **可视化配置 UI**：在 Activity Bar 中管理服务商、API Key 与允许出现在模型选择器中的模型，无需手工修改 JSON。
 - **模型自动发现**：通过 `/models`（或各服务商等效接口）抓取模型列表，并自动推断上下文长度、视觉与工具调用能力。
+- **Token 用量与自动压缩**：实时读取后端返回的 usage（无 usage 时本地估算）并以 `LanguageModelDataPart('usage')` 上报给 Copilot UI，触发其内置的上下文自动压缩。预设上下文长度已按稳定性需要收紧为安全值（例如 OpenAI/Gemini/Claude/Grok/DeepSeek 类 1M 预设统一降为 400K，200K 类降为 160K），可在设置中翻覆。
 - **连通性探测**：对选定的测试模型发送最小请求，并在侧边栏中显示往返时延。
 - **推理参数**：原生支持 OpenAI `reasoning.effort` 与 Anthropic `thinking.budget_tokens`。
 - **流式工具调用**：同时解析标准 `tool_calls` 与部分兼容服务商输出的文本形态 `<tool_call>`。

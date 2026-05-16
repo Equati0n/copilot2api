@@ -1,5 +1,18 @@
 import * as vscode from 'vscode';
 import type { ResolvedModelConfig } from './types';
+import {
+  estimateMessagesTokenCount,
+  estimateTextTokenCount,
+  mergeTokenUsage,
+  reportCopilotTokenUsage,
+  type TokenUsage,
+} from './usage';
+
+interface GeminiStreamStats {
+  textTokens: number;
+  usage?: TokenUsage;
+  usageReported: boolean;
+}
 
 interface GeminiPart {
   text?: string;
@@ -100,11 +113,13 @@ export async function processGeminiStream(
   body: ReadableStream<Uint8Array>,
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
   token: vscode.CancellationToken,
+  messages: readonly vscode.LanguageModelChatRequestMessage[] = [],
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const emittedToolCalls = new Set<string>();
   let buffer = '';
+  const stats: GeminiStreamStats = { textTokens: 0, usageReported: false };
 
   try {
     while (!token.isCancellationRequested) {
@@ -129,7 +144,7 @@ export async function processGeminiStream(
         }
 
         try {
-          processGeminiChunk(JSON.parse(data) as Record<string, unknown>, emittedToolCalls, progress);
+          processGeminiChunk(JSON.parse(data) as Record<string, unknown>, emittedToolCalls, progress, stats);
         } catch {
           // Ignore malformed keepalive/event fragments.
         }
@@ -137,6 +152,23 @@ export async function processGeminiStream(
     }
   } finally {
     reader.releaseLock();
+  }
+
+  if (stats.usage) {
+    stats.usageReported = reportCopilotTokenUsage(progress, stats.usage, 'gemini-stream');
+  }
+  if (!stats.usageReported) {
+    const promptTokens = estimateMessagesTokenCount(messages);
+    const completionTokens = stats.textTokens;
+    reportCopilotTokenUsage(
+      progress,
+      {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+      },
+      'gemini-estimated',
+    );
   }
 }
 
@@ -227,7 +259,16 @@ function processGeminiChunk(
   chunk: Record<string, unknown>,
   emittedToolCalls: Set<string>,
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  stats: GeminiStreamStats,
 ): void {
+  const usage = readGeminiUsage(
+    (chunk as { usageMetadata?: unknown }).usageMetadata ??
+      (chunk as { usage_metadata?: unknown }).usage_metadata ??
+      (chunk as { usage?: unknown }).usage,
+  );
+  if (usage) {
+    stats.usage = mergeTokenUsage(stats.usage, usage);
+  }
   const candidates = Array.isArray(chunk.candidates) ? chunk.candidates : [];
   const candidate = readRecord(candidates[0]);
   const content = readRecord(candidate?.content);
@@ -240,6 +281,7 @@ function processGeminiChunk(
     }
 
     if (typeof part.text === 'string' && part.text.length > 0) {
+      stats.textTokens += estimateTextTokenCount(part.text);
       progress.report(new vscode.LanguageModelTextPart(part.text));
     }
 
@@ -360,6 +402,38 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function readGeminiUsage(value: unknown): TokenUsage | undefined {
+  const record = readRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const promptTokens =
+    readNumber(record.promptTokenCount) ?? readNumber(record.prompt_token_count);
+  const candidates =
+    readNumber(record.candidatesTokenCount) ?? readNumber(record.candidates_token_count);
+  const thoughts =
+    readNumber(record.thoughtsTokenCount) ?? readNumber(record.thoughts_token_count);
+  const completionTokens =
+    candidates !== undefined || thoughts !== undefined
+      ? (candidates ?? 0) + (thoughts ?? 0)
+      : undefined;
+  const totalTokens =
+    readNumber(record.totalTokenCount) ??
+    readNumber(record.total_token_count) ??
+    ((promptTokens ?? 0) + (completionTokens ?? 0) || undefined);
+  const cachedTokens =
+    readNumber(record.cachedContentTokenCount) ??
+    readNumber(record.cached_content_token_count);
+  if (promptTokens === undefined && completionTokens === undefined && totalTokens === undefined) {
+    return undefined;
+  }
+  return { promptTokens, completionTokens, totalTokens, cachedTokens };
 }
 
 function stringifyJson(value: unknown): string {

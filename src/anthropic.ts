@@ -1,5 +1,18 @@
 import * as vscode from 'vscode';
 import type { ResolvedModelConfig } from './types';
+import {
+  estimateMessagesTokenCount,
+  estimateTextTokenCount,
+  mergeTokenUsage,
+  reportCopilotTokenUsage,
+  type TokenUsage,
+} from './usage';
+
+interface AnthropicStreamStats {
+  textTokens: number;
+  usage?: TokenUsage;
+  usageReported: boolean;
+}
 
 interface AnthropicContentBlock {
   type: 'text' | 'image' | 'tool_use' | 'tool_result';
@@ -117,11 +130,13 @@ export async function processAnthropicStream(
   body: ReadableStream<Uint8Array>,
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
   token: vscode.CancellationToken,
+  messages: readonly vscode.LanguageModelChatRequestMessage[] = [],
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   const toolBuffers = new Map<number, { id: string; name: string; input: string }>();
+  const stats: AnthropicStreamStats = { textTokens: 0, usageReported: false };
 
   try {
     while (!token.isCancellationRequested) {
@@ -145,7 +160,7 @@ export async function processAnthropicStream(
           continue;
         }
 
-        processAnthropicEvent(JSON.parse(data) as Record<string, unknown>, toolBuffers, progress);
+        processAnthropicEvent(JSON.parse(data) as Record<string, unknown>, toolBuffers, progress, stats);
       }
     }
   } finally {
@@ -153,6 +168,23 @@ export async function processAnthropicStream(
   }
 
   flushToolBuffers(toolBuffers, progress);
+
+  if (stats.usage) {
+    stats.usageReported = reportCopilotTokenUsage(progress, stats.usage, 'anthropic-stream');
+  }
+  if (!stats.usageReported) {
+    const promptTokens = estimateMessagesTokenCount(messages);
+    const completionTokens = stats.textTokens;
+    reportCopilotTokenUsage(
+      progress,
+      {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+      },
+      'anthropic-estimated',
+    );
+  }
 }
 
 function convertMessages(messages: readonly vscode.LanguageModelChatRequestMessage[]): {
@@ -243,8 +275,16 @@ function processAnthropicEvent(
   event: Record<string, unknown>,
   toolBuffers: Map<number, { id: string; name: string; input: string }>,
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  stats: AnthropicStreamStats,
 ): void {
   const type = event.type;
+  const usage = readAnthropicUsage(
+    (event as { usage?: unknown }).usage ??
+      readAnthropicRecord((event as { message?: unknown }).message)?.usage,
+  );
+  if (usage) {
+    stats.usage = mergeTokenUsage(stats.usage, usage);
+  }
 
   if (type === 'content_block_start') {
     const index = typeof event.index === 'number' ? event.index : 0;
@@ -267,6 +307,7 @@ function processAnthropicEvent(
     }
 
     if (delta.type === 'text_delta' && typeof delta.text === 'string') {
+      stats.textTokens += estimateTextTokenCount(delta.text);
       progress.report(new vscode.LanguageModelTextPart(delta.text));
       return;
     }
@@ -372,4 +413,35 @@ function parseJsonObject(value: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function readAnthropicRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function readAnthropicNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function readAnthropicUsage(value: unknown): TokenUsage | undefined {
+  const record = readAnthropicRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const promptTokens =
+    readAnthropicNumber(record.input_tokens) ?? readAnthropicNumber(record.prompt_tokens);
+  const completionTokens =
+    readAnthropicNumber(record.output_tokens) ?? readAnthropicNumber(record.completion_tokens);
+  const totalTokens =
+    readAnthropicNumber(record.total_tokens) ??
+    ((promptTokens ?? 0) + (completionTokens ?? 0) || undefined);
+  const cachedTokens =
+    readAnthropicNumber(record.cache_read_input_tokens) ??
+    readAnthropicNumber(record.cached_tokens);
+  if (promptTokens === undefined && completionTokens === undefined && totalTokens === undefined) {
+    return undefined;
+  }
+  return { promptTokens, completionTokens, totalTokens, cachedTokens };
 }

@@ -22,24 +22,25 @@ export interface ProviderPreset {
   fallbackModels: ProviderPresetModel[];
 }
 
-const OPENAI_1M_CONTEXT = 1050000;
-const OPENAI_GPT41_CONTEXT = 1047576;
-const OPENAI_400K_CONTEXT = 400000;
-const O_SERIES_CONTEXT = 200000;
+const OPENAI_1M_CONTEXT = 400000;
+const OPENAI_GPT41_CONTEXT = 192000;
+const OPENAI_400K_CONTEXT = 192000;
+const O_SERIES_CONTEXT = 160000;
 const O_SERIES_OUTPUT = 100000;
-const CLAUDE_1M_CONTEXT = 1000000;
-const CLAUDE_200K_CONTEXT = 200000;
-const XAI_GROK_2M_CONTEXT = 2000000;
-const XAI_GROK_1M_CONTEXT = 1000000;
-const XAI_GROK_CODE_CONTEXT = 256000;
-const DEEPSEEK_1M_CONTEXT = 1048576;
-const DEEPSEEK_384K_OUTPUT = 393216;
-const GEMINI_1M_CONTEXT = 1048576;
-const KIMI_256K_CONTEXT = 262144;
-const KIMI_128K_CONTEXT = 131072;
-const MINIMAX_200K_CONTEXT = 204800;
-const GLM_200K_CONTEXT = 200000;
+const CLAUDE_1M_CONTEXT = 400000;
+const CLAUDE_200K_CONTEXT = 160000;
+const XAI_GROK_2M_CONTEXT = 400000;
+const XAI_GROK_1M_CONTEXT = 400000;
+const XAI_GROK_CODE_CONTEXT = 192000;
+const DEEPSEEK_1M_CONTEXT = 400000;
+const DEEPSEEK_SAFE_OUTPUT = 192000;
+const GEMINI_1M_CONTEXT = 400000;
+const KIMI_256K_CONTEXT = 192000;
+const KIMI_128K_CONTEXT = 128000;
+const MINIMAX_200K_CONTEXT = 160000;
+const GLM_200K_CONTEXT = 160000;
 const GLM_128K_CONTEXT = 128000;
+const GLM_SAFE_OUTPUT = 65536;
 
 export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
   {
@@ -102,8 +103,8 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: 'https://api.deepseek.com',
     custom: false,
     fallbackModels: [
-      { id: 'deepseek-v4-flash', family: 'deepseek', contextLength: DEEPSEEK_1M_CONTEXT, maxOutputTokens: DEEPSEEK_384K_OUTPUT, vision: false, toolCalling: true, reasoningEffort: 'high' },
-      { id: 'deepseek-v4-pro', family: 'deepseek', contextLength: DEEPSEEK_1M_CONTEXT, maxOutputTokens: DEEPSEEK_384K_OUTPUT, vision: false, toolCalling: true, reasoningEffort: 'high' },
+      { id: 'deepseek-v4-flash', family: 'deepseek', contextLength: DEEPSEEK_1M_CONTEXT, maxOutputTokens: DEEPSEEK_SAFE_OUTPUT, vision: false, toolCalling: true, reasoningEffort: 'high' },
+      { id: 'deepseek-v4-pro', family: 'deepseek', contextLength: DEEPSEEK_1M_CONTEXT, maxOutputTokens: DEEPSEEK_SAFE_OUTPUT, vision: false, toolCalling: true, reasoningEffort: 'high' },
       { id: 'deepseek-chat', family: 'deepseek', contextLength: 64000, maxOutputTokens: 8192, vision: false, toolCalling: true },
       { id: 'deepseek-reasoner', family: 'deepseek', contextLength: 64000, maxOutputTokens: 8192, vision: false, toolCalling: false },
     ],
@@ -173,7 +174,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
       { id: 'glm-5v-turbo', family: 'glm', contextLength: GLM_200K_CONTEXT, maxOutputTokens: 128000, vision: true, toolCalling: true },
       { id: 'glm-4.7', family: 'glm', contextLength: GLM_200K_CONTEXT, maxOutputTokens: 128000, vision: false, toolCalling: true },
       { id: 'glm-4.6', family: 'glm', contextLength: GLM_200K_CONTEXT, maxOutputTokens: 128000, vision: false, toolCalling: true },
-      { id: 'glm-4.6v', family: 'glm', contextLength: GLM_128K_CONTEXT, maxOutputTokens: 128000, vision: true, toolCalling: true },
+      { id: 'glm-4.6v', family: 'glm', contextLength: GLM_128K_CONTEXT, maxOutputTokens: GLM_SAFE_OUTPUT, vision: true, toolCalling: true },
     ],
   },
   {
@@ -288,7 +289,7 @@ export function inferModelDefaults(model: Pick<ModelConfig, 'id' | 'apiType' | '
       return {
         family: 'glm',
         contextLength: id.includes('4.6v') ? GLM_128K_CONTEXT : GLM_200K_CONTEXT,
-        maxOutputTokens: 128000,
+        maxOutputTokens: id.includes('4.6v') ? GLM_SAFE_OUTPUT : 128000,
         vision: id.includes('v'),
         toolCalling: true,
       };
@@ -391,7 +392,7 @@ function inferDeepSeekDefaults(id: string): Partial<ModelConfig> {
   return {
     family: 'deepseek',
     contextLength: currentV4 ? DEEPSEEK_1M_CONTEXT : 64000,
-    maxOutputTokens: currentV4 ? DEEPSEEK_384K_OUTPUT : 8192,
+    maxOutputTokens: currentV4 ? DEEPSEEK_SAFE_OUTPUT : 8192,
     vision: false,
     toolCalling: !id.includes('reasoner'),
     reasoningEffort: currentV4 ? 'high' : undefined,
@@ -484,24 +485,50 @@ function shouldRefreshKnownDefault(
 }
 
 function isKnownStaleContextLength(id: string, value: number): boolean {
-  if ((id.startsWith('gpt-5.5') || id.startsWith('gpt-5.4')) && [1048576, 400000].includes(value)) {
+  if ((id.startsWith('gpt-5.5') || id.startsWith('gpt-5.4')) && [1048576, 1050000, 1047576, 400000, 192000].includes(value)) {
+    return value !== OPENAI_400K_CONTEXT;
+  }
+  if (id.startsWith('gpt-4.1') && [1048576, 1047576, 400000].includes(value)) {
     return true;
   }
-  if (id.startsWith('gpt-4.1') && value === 1048576) {
+  if ((id.includes('opus-4-7') || id.includes('opus-4-6') || id.includes('sonnet-4-6')) && [200000, 1000000].includes(value)) {
+    return value !== CLAUDE_1M_CONTEXT;
+  }
+  if ((id.includes('claude') || id.includes('sonnet') || id.includes('haiku') || id.includes('opus')) && value === 200000) {
     return true;
   }
-  if ((id.includes('opus-4-7') || id.includes('opus-4-6') || id.includes('sonnet-4-6')) && value === 200000) {
+  if (id.includes('grok') && [256000, 1000000, 2000000, 1048576].includes(value)) {
     return true;
   }
-  if (id.includes('grok-4.20') && [256000, 1048576].includes(value)) {
+  if (id.includes('deepseek') && [1048576, 131072, 65536].includes(value)) {
     return true;
   }
-  if (id.includes('grok-4.3') && value === 256000) {
+  if (id.includes('gemini') && [1048576, 2097152, 1000000].includes(value)) {
     return true;
+  }
+  if ((id.includes('kimi') || id.includes('moonshot')) && [262144, 131072].includes(value)) {
+    return value !== KIMI_128K_CONTEXT;
+  }
+  if (id.includes('minimax') && value === 204800) {
+    return true;
+  }
+  if (id.includes('glm') && [200000, 128000].includes(value)) {
+    return id.includes('4.6v') ? false : value !== GLM_200K_CONTEXT;
+  }
+  if (id.includes('o1') || id.includes('o3') || id.includes('o4')) {
+    if ([200000, 128000].includes(value)) {
+      return value !== O_SERIES_CONTEXT;
+    }
   }
   return false;
 }
 
 function isKnownStaleMaxOutputTokens(id: string, value: number): boolean {
+  if (id.includes('deepseek-v4') && [65536, 128000, 393216].includes(value)) {
+    return true;
+  }
+  if (id.includes('glm-4.6v') && value === 128000) {
+    return true;
+  }
   return false;
 }

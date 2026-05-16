@@ -70,7 +70,7 @@ export function prepareProviderRequest(
       url: buildAnthropicMessagesUrl(model.baseUrl),
       headers: buildAnthropicHeaders(model, apiKey),
       body: buildAnthropicRequest(model, messages, options),
-      processStream: processAnthropicStream,
+      processStream: (body, progress, token) => processAnthropicStream(body, progress, token, messages),
     };
   }
 
@@ -79,7 +79,7 @@ export function prepareProviderRequest(
       url: buildOpenAIResponsesUrl(model.baseUrl),
       headers: buildOpenAIResponsesHeaders(model, apiKey),
       body: buildOpenAIResponsesRequest(model, messages, options),
-      processStream: processOpenAIResponsesStream,
+      processStream: (body, progress, token) => processOpenAIResponsesStream(body, progress, token, messages),
     };
   }
 
@@ -88,7 +88,7 @@ export function prepareProviderRequest(
       url: buildGeminiGenerateContentUrl(model.baseUrl, model.id, true),
       headers: buildGeminiHeaders(model, apiKey),
       body: buildGeminiRequest(model, messages, options),
-      processStream: processGeminiStream,
+      processStream: (body, progress, token) => processGeminiStream(body, progress, token, messages),
     };
   }
 
@@ -97,7 +97,7 @@ export function prepareProviderRequest(
     url: buildOpenAIChatCompletionsUrl(model.baseUrl),
     headers: buildHeaders(model, apiKey),
     body: buildChatCompletionRequest(model, messages, options, reasoningTracker),
-    processStream: (body, progress, token) => processChatCompletionStream(body, progress, token, reasoningTracker),
+    processStream: (body, progress, token) => processChatCompletionStream(body, progress, token, reasoningTracker, messages),
   };
 }
 

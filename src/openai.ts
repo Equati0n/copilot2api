@@ -9,6 +9,13 @@ import type {
 } from './types';
 import { ReasoningTracker, signatureForMessage } from './reasoningMemory';
 import { logger } from './logger';
+import {
+  estimateMessagesTokenCount,
+  estimateTextTokenCount,
+  mergeTokenUsage,
+  reportCopilotTokenUsage,
+  type TokenUsage,
+} from './usage';
 
 interface ToolCallBuffer {
   id?: string;
@@ -26,6 +33,11 @@ interface StreamStats {
   emittedToolCalls: number;
   doneSignal: boolean;
   finishReason?: string;
+  usage?: TokenUsage;
+  usageReported?: boolean;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
 }
 
 type ModelConfigurationOptions = vscode.ProvideLanguageModelChatResponseOptions & {
@@ -263,6 +275,7 @@ export async function processChatCompletionStream(
   progress: vscode.Progress<vscode.LanguageModelResponsePart>,
   token: vscode.CancellationToken,
   reasoningTracker: ReasoningTracker,
+  messages: readonly vscode.LanguageModelChatRequestMessage[] = [],
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -348,6 +361,25 @@ export async function processChatCompletionStream(
     visibleSignature: buildAssistantVisibleSignature(visibleText, toolCalls),
   });
   flushToolCalls(toolCalls, progress, stats);
+
+  if (stats.usage) {
+    stats.usageReported = reportCopilotTokenUsage(progress, stats.usage, 'openai-stream');
+  }
+  if (!stats.usageReported) {
+    const promptTokens = estimateMessagesTokenCount(messages);
+    const completionTokens =
+      estimateTextTokenCount(visibleText) + estimateTextTokenCount(reasoningContent);
+    stats.usageReported = reportCopilotTokenUsage(
+      progress,
+      {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+      },
+      'openai-estimated',
+    );
+  }
+
   logger.info('Stream complete.', stats);
 }
 
@@ -532,6 +564,19 @@ function processChunk(
   onReasoningDelta: (delta: string) => void,
 ): void {
   stats.chunkCount += 1;
+  const usage = readOpenAIUsage(chunk.usage);
+  if (usage) {
+    stats.usage = mergeTokenUsage(stats.usage, usage);
+    if (usage.promptTokens !== undefined) {
+      stats.promptTokens = usage.promptTokens;
+    }
+    if (usage.completionTokens !== undefined) {
+      stats.completionTokens = usage.completionTokens;
+    }
+    if (usage.totalTokens !== undefined) {
+      stats.totalTokens = usage.totalTokens;
+    }
+  }
   const choices = chunk.choices;
   if (!Array.isArray(choices) || choices.length === 0) {
     return;
@@ -844,6 +889,37 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function readOpenAIUsage(value: unknown): TokenUsage | undefined {
+  const record = readRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const promptDetails = readRecord(record.prompt_tokens_details) ?? readRecord(record.input_tokens_details);
+  const promptTokens =
+    readNumber(record.prompt_tokens) ??
+    readNumber(record.input_tokens) ??
+    readNumber((record as Record<string, unknown>).promptTokens);
+  const completionTokens =
+    readNumber(record.completion_tokens) ??
+    readNumber(record.output_tokens) ??
+    readNumber((record as Record<string, unknown>).completionTokens);
+  const totalTokens =
+    readNumber(record.total_tokens) ??
+    ((promptTokens ?? 0) + (completionTokens ?? 0) || undefined);
+  const cachedTokens =
+    readNumber(promptDetails?.cached_tokens) ??
+    readNumber(promptDetails?.cache_read_input_tokens) ??
+    readNumber(record.prompt_cache_hit_tokens);
+  if (promptTokens === undefined && completionTokens === undefined && totalTokens === undefined) {
+    return undefined;
+  }
+  return { promptTokens, completionTokens, totalTokens, cachedTokens };
 }
 
 function readContentDelta(value: unknown): string | undefined {

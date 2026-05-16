@@ -23,6 +23,7 @@ English | [简体中文](README.zh-CN.md)
 - **Multi-API support**: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Google Gemini in a single extension.
 - **Visual configuration UI**: Manage providers, API keys, and allowed models from the Activity Bar — no JSON editing required.
 - **Auto model discovery**: Fetches `/models` (or the provider equivalent) and infers context length, vision, and tool-calling capabilities.
+- **Token usage & auto-compression**: Reads real usage from the backend stream (falls back to local estimation when missing) and forwards it to the Copilot UI via `LanguageModelDataPart('usage')`, enabling its built-in context auto-compression. Default context lengths are tightened to safe values (e.g. 1M-class presets land at 400K, 200K-class at 160K) and can be overridden per model.
 - **Connectivity probe**: Sends a minimal request to a chosen test model and reports latency directly in the side bar.
 - **Reasoning controls**: First-class support for OpenAI `reasoning.effort` and Anthropic `thinking.budget_tokens`.
 - **Tool calling streaming**: Parses both native `tool_calls` and text-form `<tool_call>` payloads emitted by some OpenAI-compatible gateways.
